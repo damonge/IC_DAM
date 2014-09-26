@@ -82,7 +82,10 @@ int main(int argc,char* argv[])
 	     "Writing initial condition to file for e.g. Gadget N-body simulation\n");
   char filename[256];
   sprintf(filename,"%s",Param.init_filename);
-  write_snapshot(filename,snapshot);
+  if(Param.nbox_per_side<=0)
+    write_snapshot(filename,snapshot);
+  else
+    write_snapshot_cola(filename,snapshot);
 
   timer_print();
 

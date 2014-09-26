@@ -10,6 +10,7 @@ typedef struct {
 
   double np_alloc_factor;
   double boxsize;
+  int nbox_per_side;
 
   double omega_m, sigma8, h;
 
@@ -37,10 +38,10 @@ typedef struct {
   float dx1[3];
   float dx2[3];
   long long id;
-} ParticleMinimum;
+} Particle;
 
 typedef struct {
-  ParticleMinimum* p;
+  Particle* p;
   int np_local;
   int np_allocated;
   long long np_total;
@@ -130,9 +131,11 @@ typedef struct {
   int flag_metals;
   unsigned int np_total_highword[6];
   int  flag_entropy_instead_u;
-  char fill[60];
+  int flag_gadgetformat;
+  char fill[56];
 } GadgetHeader;
 
 void write_snapshot(const char filebase[],Snapshot const * const snapshot);
+void write_snapshot_cola(const char filebase[],Snapshot const * const snapshot);
 
 #endif //_COMMON_H_

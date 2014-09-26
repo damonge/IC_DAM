@@ -14,7 +14,7 @@ Snapshot *allocate_snapshot(const int nc,const int nx,const double np_alloc_fact
   long long nc_long=nc;
   snapshot->np_total=nc_long*nc_long*nc_long;
   snapshot->p=mem;
-  assert(mem_size>=sizeof(ParticleMinimum)*(snapshot->np_allocated));
+  assert(mem_size>=sizeof(Particle)*(snapshot->np_allocated));
   snapshot->nc=nc;
   snapshot->a=0.0f; //snapshot->a_v= 0.0f; snapshot->a_x= 0.0f;
 
@@ -55,7 +55,7 @@ void allocate_shared_memory(const int nc,const double np_alloc_factor,
   
   // mem2
   // PM density_k mesh and snapshot
-  size_t size_snapshot=sizeof(ParticleMinimum)*np_alloc;
+  size_t size_snapshot=sizeof(Particle)*np_alloc;
   size_t ncomplex2=size_snapshot/sizeof(fftwf_complex)+1;
   msg_printf(verbose,"%d Mbytes requested for snapshot in mem2\n",
 	     (int)(size_snapshot/(1024*1024)));

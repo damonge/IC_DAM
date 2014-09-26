@@ -53,6 +53,9 @@ static int read_parameter_file(char const *fname,Parameters *param)
   if(fi==NULL)
     msg_abort(1000, "Error: couldn't open file %s\n",fname);
 
+  // Fix to 1 in case it is not present
+  param->nbox_per_side=1;
+
   n_lin=linecount(fi);
   rewind(fi);
   for(ii=0;ii<n_lin;ii++) {
@@ -68,6 +71,8 @@ static int read_parameter_file(char const *fname,Parameters *param)
       param->nc=atoi(s2);
     else if(!strcmp(s1,"boxsize="))
       param->boxsize=atof(s2);
+    else if(!strcmp(s1,"nbox_per_side="))
+      param->nbox_per_side=atoi(s2);
     else if(!strcmp(s1,"a_final="))
       param->a_final=atof(s2);
     else if(!strcmp(s1,"random_seed="))

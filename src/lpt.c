@@ -440,7 +440,7 @@ void lpt_set_displacement(const int Seed,const double Box,
   const float D2=GrowthFactor2(a_init);
   const float Dv=Vgrowth(a_init); // dD_{za}/dTau
   const float Dv2=Vgrowth2(a_init); // dD_{2lpt}/dTau
-  ParticleMinimum* p=snapshot->p;
+  Particle* p=snapshot->p;
 
   double nmesh3_inv=1.0/pow((double)Nmesh,3.0);
   long long id=(long long)Local_x_start*Nmesh*Nmesh+1;
