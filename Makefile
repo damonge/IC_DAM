@@ -13,7 +13,7 @@ LIBS    := -lm
 
 # Define paths of FFTW3 & GSL libraries if necessary.
 
-FFTW3_DIR ?= /home/dmonge
+FFTW3_DIR ?= /home/damonge
 GSL_DIR   ?= 
 
 DIR_PATH = $(FFTW3_DIR) $(GSL_DIR)
@@ -26,8 +26,7 @@ all: $(EXEC)
 
 OBJS := src/main.o
 OBJS += src/read_param.o src/lpt.o src/msg.o src/cosmo.o
-OBJS += src/pm.o src/cola.o src/comm.o src/move.o
-OBJS += src/write.o src/timer.o src/mem.o
+OBJS += src/comm.o src/write.o src/timer.o src/mem.o
 
 LIBS += -ldl
 LIBS += -lgsl -lgslcblas
@@ -42,13 +41,10 @@ cola_halo: $(OBJS)
 	$(CC) $(CFLAGS) $(OBJS) $(LIBS) -o $@
 
 src/main.o: src/main.c src/common.h
-src/cola.o: src/cola.c src/common.h
 src/comm.o: src/comm.c src/common.h
 src/lpt.o: src/lpt.c src/common.h
 src/mem.o: src/mem.c src/common.h
-src/move.o: src/move.c src/common.h
 src/msg.o: src/msg.c src/common.h
-src/pm.o: src/pm.c src/common.h
 src/cosmo.o: src/cosmo.c src/common.h
 src/read_param.o: src/read_param.c src/common.h
 src/timer.o: src/timer.c src/common.h

@@ -136,7 +136,8 @@ void lpt_init(const int nc,const void* mem,const size_t size)
   seedtable=malloc(Nmesh*Nmesh*sizeof(unsigned int)); assert(seedtable);
 }
 
-void lpt_set_displacement(const int Seed,const double Box,Particles* particles)
+void lpt_set_displacement(const int Seed,const double Box,
+			  const double a_init,Snapshot* const snapshot)
 {
   msg_printf(verbose,"Computing LPT displacement fields...\n");
   msg_printf(info,"Random Seed = %d\n",Seed);
@@ -434,10 +435,18 @@ void lpt_set_displacement(const int Seed,const double Box,Particles* particles)
   msg_printf(verbose,"Setting particle grid and displacements\n");
   float x[3];
   const float dx=Box/Nmesh;
-  Particle* p=particles->p;
+  const float vfac=100.0f/a_init;   // km/s; H0= 100 km/s/(h^-1 Mpc)
+  const float D1=GrowthFactor(a_init);
+  const float D2=GrowthFactor2(a_init);
+  const float Dv=Vgrowth(a_init); // dD_{za}/dTau
+  const float Dv2=Vgrowth2(a_init); // dD_{2lpt}/dTau
+  ParticleMinimum* p=snapshot->p;
 
   double nmesh3_inv=1.0/pow((double)Nmesh,3.0);
   long long id=(long long)Local_x_start*Nmesh*Nmesh+1;
+
+  msg_printf(debug,"initial growth factor %5.3f %e %e\n",a_init,D1,D2);
+  msg_printf(debug,"initial velocity factor %5.3f %e %e\n",a_init,vfac*Dv,vfac*Dv2);
 
   for(int i=0;i<Local_nx;i++) {
     x[0]=(Local_x_start+i+0.5f)*dx;
@@ -449,85 +458,22 @@ void lpt_set_displacement(const int Seed,const double Box,Particles* particles)
 	for(int axes=0;axes<3;axes++) {
 	  float dis=disp[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
 	  float dis2=nmesh3_inv*disp2[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
-
-	  p->x[axes]=x[axes];
+	  
+	  p->x[axes]=x[axes]+D1*dis+D2*dis2;
+	  p->v[axes]=vfac*(Dv*dis+Dv2*dis2);
 	  p->dx1[axes]=dis; // Psi_1(0)
 	  p->dx2[axes]=dis2; // Psi_2(0)
-	  p->v[axes]=0.0f; // velocity in comoving 2LPT
 	}
 	p->id=id++;
-#ifdef _LIGHTCONE
-	p->in_lc=0;
-#endif //_LIGHTCONE
 	p++;
       }
     }
   }
 
-  particles->np_local=Local_nx*Nmesh*Nmesh;
+  snapshot->np_local=Local_nx*Nmesh*Nmesh;
+  snapshot->a=a_init;
 
   gsl_rng_free(random_generator);
-}
-
-void lpt_set_initial_condition(const double InitTime,const double Box,Particles* particles)
-{
-  msg_printf(verbose,"Setting initial condition\n");
-
-  const float dx=Box/Nmesh;
-  const float D1=GrowthFactor(InitTime);
-  const float D2=GrowthFactor2(InitTime);
-  Particle* p=particles->p;
-  float maxdisp=0.0f;
-
-  long long id=(long long)Local_x_start*Nmesh*Nmesh+1;
-
-  msg_printf(verbose,"Inital growth factor (a=%g), D= %g D2= %g\n", 
-	     InitTime,D1,D2);
-
-  for(int i=0;i<Local_nx;i++) {
-    for(int j=0;j<Nmesh;j++) {
-      for(int k=0;k<Nmesh;k++) {
-
-	for(int axes=0;axes<3;axes++) {
-	  float displac=D1*(p->dx1[axes])+D2*(p->dx2[axes]);
-
-	  p->x[axes]+=displac;
-	  p->v[axes]=0.0f;
-	  
-	  //2LPT velocity
-	  float dis_mag=fabsf(displac);
-	  if(dis_mag>maxdisp)
-	    maxdisp=dis_mag;
-	}
-	if(p->id!=id) msg_abort(2004,"Wrong particle id\n");
-	id++;
-	p++;
-      }
-    }
-  }
-
-  float max_disp_glob;
-  MPI_Reduce(&maxdisp,&max_disp_glob,1,MPI_FLOAT,MPI_MAX,0, 
-	     MPI_COMM_WORLD);
-
-  msg_printf(verbose, 
-	     "Maximum displacement: %f, in units of the part-spacing= %f\n",
-	     max_disp_glob,max_disp_glob/dx);
-
-  particles->a_x=InitTime;
-  particles->a_v=InitTime;
-}
-
-void lpt_finalize(void)
-{
-  for(int i=0;i<3;i++) {
-    fftwf_free(cdisp[i]);
-    fftwf_free(cdisp2[i]);
-  }
-  for(int i=0;i<6;i++)
-    fftwf_free(cdigrad[i]);
-
-  fftwf_mpi_cleanup();
 }
 
 int lpt_get_local_nx(void)

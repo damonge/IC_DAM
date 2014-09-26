@@ -33,102 +33,6 @@ static struct growth_table
   double a,gf;
 } *GrowthTable;
 
-#ifdef _LIGHTCONE
-#define N_RCOM 100
-#define AMIN 0.005 //ZMAX=199
-double R2max;
-double Inv_dr2;
-float ObsPos[3];
-
-static struct rcom_table
-{
-  double r2,a;
-} *RcomTable;
-
-float x2a(float const * const pos)
-{
-  float x=pos[0]-ObsPos[0];
-  float y=pos[1]-ObsPos[1];
-  float z=pos[2]-ObsPos[2];
-  float r2=x*x+y*y+z*z;
-
-  if(r2<0||r2>R2max)
-    msg_abort(3001,"Wrong radius %lf\n",sqrt(r2));
-  if(r2==0) return 1;
-  else if(r2==R2max) return AMIN;
-  else {
-    int ibin=(int)(r2*Inv_dr2);
-    double u=(r2-RcomTable[ibin].r2)*Inv_dr2;
-    double aout=(1-u)*RcomTable[ibin].a+u*RcomTable[ibin+1].a;
-
-    return (float)aout;
-  }
-}
-
-static double integrand_rcom(double a,void *params)
-{
-  return 1/sqrt(a*(Omega+OmegaLambda*a*a*a+(1-Omega-OmegaLambda)*a));
-}
-
-static double rcom_of_a(double a)
-{
-  double integral,errintegral;
-  gsl_function integrand;
-  size_t sdum;
-  integrand.function=&integrand_rcom;
-  integrand.params=NULL;
-
-  gsl_integration_qng(&integrand,a,1,0,1E-6,
-		      &integral,&errintegral,&sdum);
-  return 2997.92458*integral;
-}
-
-#define RTOL 1.0E-5
-static double find_a(double r2)
-{
-  if(r2==0) return 1;
-  else {
-    double am;
-    double ai=AMIN;
-    double af=1.0;
-    double err_r=1.0;
-    double r_in=sqrt(r2);
-
-    while(err_r>RTOL) {
-      double rm;
-      am=0.5*(ai+af);
-      rm=rcom_of_a(am);
-
-      if(rm<r_in) af=am;
-      else ai=am;
-      
-      err_r=fabs(rm/r_in-1);
-    }
-
-    return am;
-  }
-}
-
-static void set_lightcone(void)
-{
-  int ii;
-
-  for(ii=0;ii<3;ii++) ObsPos[ii]=Param.pos_obs[ii];
-
-  R2max=pow(rcom_of_a(AMIN),2);
-  Inv_dr2=N_RCOM/R2max;
-  RcomTable=malloc(N_RCOM*sizeof(struct rcom_table));
-
-  for(ii=0;ii<N_RCOM;ii++) {
-    double r2=ii/Inv_dr2;
-    double a=find_a(r2);
-
-    RcomTable[ii].r2=r2;
-    RcomTable[ii].a=a;
-  }
-}
-#endif //_LIGHTCONE
-
 static void read_power_table_camb(const char filename[])
 {
   double k, p;
@@ -267,7 +171,7 @@ static double omega_a(const double a)
 		 OmegaLambda*a*a*a);
 }
 
-double Qfactor(const double a)
+static double Qfactor(const double a)
 {
   double acube=a*a*a;
   return sqrt(Omega*acube+OmegaLambda*acube*acube+
@@ -372,20 +276,14 @@ void cosmo_init(const char filename[],const double sigma8,
     read_power_table_camb(filename);
     Norm=normalize_power(sigma8);
     get_growth_factor();
-#ifdef _LIGHTCONE
-    set_lightcone();
-#endif //_LIGHTCONE
   }
 
-  msg_printf(normal,"Powerspecectrum file: %s\n",filename);
+  msg_printf(normal,"Powerspectrum file: %s\n",filename);
 
   MPI_Bcast(&NPowerTable,1,MPI_INT,0,MPI_COMM_WORLD);
   if(myrank!=0) {
     PowerTable=malloc(NPowerTable*sizeof(struct pow_table));
     GrowthTable=malloc(N_A_GROWTH*sizeof(struct growth_table));
-#ifdef _LIGHTCONE
-    RcomTable=malloc(N_RCOM*sizeof(struct rcom_table));
-#endif // _LIGHTCONE
   }
 
   MPI_Bcast(PowerTable,NPowerTable*sizeof(struct pow_table),MPI_BYTE,0,
@@ -393,55 +291,4 @@ void cosmo_init(const char filename[],const double sigma8,
   MPI_Bcast(&Norm,1,MPI_DOUBLE,0,MPI_COMM_WORLD);
   MPI_Bcast(GrowthTable,N_A_GROWTH*sizeof(struct growth_table),MPI_BYTE,0,
 	    MPI_COMM_WORLD);
-#ifdef _LIGHTCONE
-  MPI_Bcast(RcomTable,N_RCOM*sizeof(struct rcom_table),MPI_BYTE,0,
-	    MPI_COMM_WORLD);
-  MPI_Bcast(&R2max,1,MPI_DOUBLE,0,MPI_COMM_WORLD);
-  MPI_Bcast(&Inv_dr2,1,MPI_DOUBLE,0,MPI_COMM_WORLD);
-  MPI_Bcast(ObsPos,3,MPI_FLOAT,0,MPI_COMM_WORLD);
-#endif // _LIGHTCONE
-}
-
-void set_a_final(void)
-{
-#ifdef _LIGHTCONE
-  int axes;
-  double a0,af;
-  float r2max=0,r2min=0;
-
-  for(axes=0;axes<3;axes++) {
-    float dist_max,dist_min;
-
-    if(Param.pos_obs[axes]<0) dist_min=-Param.pos_obs[axes];
-    else if(Param.pos_obs[axes]>=Param.boxsize) dist_min=Param.pos_obs[axes]-Param.boxsize;
-    else dist_min=0;
-
-    if(Param.pos_obs[axes]<0) dist_max=Param.boxsize-Param.pos_obs[axes];
-    else if(Param.pos_obs[axes]>0.5*Param.boxsize) dist_max=Param.pos_obs[axes];
-    else dist_max=Param.boxsize-Param.pos_obs[axes];
-
-    r2max+=dist_max*dist_max;
-    r2min+=dist_min*dist_min;
-  }
-  a0=find_a(r2max);
-  af=find_a(r2min);
-
-
-  msg_printf(info,"Box extends from r= %.2lf Mpc/h to r= %.2lf Mpc/h\n",
-	     sqrt(r2min),sqrt(r2max));
-  msg_printf(info,"This corresponds to a in (%.2lE,%.2lE), z in (%.2lf,%.2lf)\n",
-	     a0,af,1/af-1,1/a0-1);
-
-  if(Param.a_final<af) {
-    msg_printf(info,"a_final = %.2lf is unnecessary, resetting to %.2lf\n",
-	       Param.a_final,af);
-    Param.a_final=af;
-  }
-#else //_LIGHTCONE
-  if(Param.a_final<Param.aout[Param.n_aout-1]) {
-    msg_printf(info,"a_final = %.2lf is unnecessary, resetting to %.2lf\n",
-	       Param.a_final,Param.aout[Param.n_aout-1]);
-    Param.a_final=Param.aout[Param.n_aout-1];
-  }
-#endif //_LIGHTCONE
 }
