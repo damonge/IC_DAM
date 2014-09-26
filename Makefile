@@ -8,7 +8,7 @@
 CC      = mpicc -std=c99 
 WOPT    ?= -Wall
 CFLAGS  := -O3 $(WOPT) $(OPENMP)
-CFLAGS += -D_DAM_SAVEMEM -D_LONGIDS -D_LIGHTCONE #-D_DAM_NOMEASURE -D_DAM_NOT_WRITE_INIT
+CFLAGS += #-D_DAM_SAVEMEM -D_LONGIDS -D_LIGHTCONE #-D_DAM_NOMEASURE -D_DAM_NOT_WRITE_INIT
 LIBS    := -lm
 
 # Define paths of FFTW3 & GSL libraries if necessary.
@@ -26,7 +26,7 @@ all: $(EXEC)
 
 OBJS := src/main.o
 OBJS += src/read_param.o src/lpt.o src/msg.o src/cosmo.o
-OBJS += src/comm.o src/write.o src/timer.o src/mem.o
+OBJS += src/comm.o src/timer.o
 
 LIBS += -ldl
 LIBS += -lgsl -lgslcblas
@@ -43,12 +43,10 @@ cola_halo: $(OBJS)
 src/main.o: src/main.c src/common.h
 src/comm.o: src/comm.c src/common.h
 src/lpt.o: src/lpt.c src/common.h
-src/mem.o: src/mem.c src/common.h
 src/msg.o: src/msg.c src/common.h
 src/cosmo.o: src/cosmo.c src/common.h
 src/read_param.o: src/read_param.c src/common.h
 src/timer.o: src/timer.c src/common.h
-src/write.o: src/write.c src/common.h
 
 .PHONY: clean run dependence
 clean :

@@ -17,26 +17,8 @@
 
 //#define LOGTIMESTEP 1
 
-int mpi_init(int* p_argc,char ***p_argv); //DAM used
-void fft_init(int threads_ok); //DAM used
-void get_mem(void)
-{
-#ifdef _DAM_DEBUG
-  int npag;
-  double memo;
-  char fname_mem[256];
-  FILE *fil;
-
-  sprintf(fname_mem,"/proc/%d/statm",getpid());
-  fil=fopen(fname_mem,"r");
-  fscanf(fil,"%d",&npag);
-  fclose(fil);
-  memo=npag*getpagesize()/(1024*1024);
-
-  printf("Using %lf MB\n",memo);
-  scanf("%d",&npag);
-#endif //_DAM_DEBUG
-}
+static int mpi_init(int* p_argc,char ***p_argv); //DAM used
+static void fft_init(int threads_ok); //DAM used
 
 int main(int argc,char* argv[])
 {
@@ -61,21 +43,14 @@ int main(int argc,char* argv[])
 
   const double a_init=Param.a_final;
 
-  Memory mem; 
-  allocate_shared_memory(Param.nc,Param.np_alloc_factor,&mem);
-
-  lpt_init(Param.nc,mem.mem1,mem.size1);
-  const int local_nx=lpt_get_local_nx();
-
-  Snapshot* snapshot= allocate_snapshot(Param.nc,local_nx,Param.np_alloc_factor,
-					mem.mem2,mem.size2);
+  lpt_init(Param.nc);
 
   MPI_Barrier(MPI_COMM_WORLD);
   int seed=Param.random_seed;
 
   // Sets initial grid and 2LPT displacement
   timer_set_category(LPT);
-  lpt_set_displacement(seed,Param.boxsize,a_init,snapshot);
+  lpt_set_displacement(seed,Param.boxsize);
 
   //Writes initial condition
   msg_printf(info,
@@ -83,11 +58,13 @@ int main(int argc,char* argv[])
   char filename[256];
   sprintf(filename,"%s",Param.init_filename);
   if(Param.nbox_per_side<=0)
-    write_snapshot(filename,snapshot);
+    write_snapshot(filename,a_init);
   else
-    write_snapshot_cola(filename,snapshot);
+    write_snapshot_cola(filename,a_init);
 
   timer_print();
+
+  lpt_end();
 
   MPI_Finalize();
   return 0;

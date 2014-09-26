@@ -10,7 +10,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <string.h>
 #include <math.h>
+#include <assert.h>
 
 #include <fftw3-mpi.h>
 #include <gsl/gsl_rng.h>
@@ -29,13 +31,28 @@ static int Local_nx, Local_x_start;
 
 static unsigned int *seedtable;
 
-fftwf_complex *(cdisp[3]), *(cdisp2[3]); // ZA and 2nd order displacements
-float         *(disp[3]), *(disp2[3]);
-fftwf_complex *(cdigrad[6]);
-float         *(digrad[6]);
+static fftwf_complex *(cdisp[3]), *(cdisp2[3]); // ZA and 2nd order displacements
+static float         *(disp[3]), *(disp2[3]);
+static fftwf_complex *(cdigrad[6]);
+static float         *(digrad[6]);
+
+void lpt_end(void)
+{
+  for(int axes=0;axes<3;axes++) {
+    fftwf_free(cdisp[axes]);
+    fftwf_destroy_plan(Disp_plan[axes]);
+    fftwf_destroy_plan(Disp2_plan[axes]);
+  }
+  for(int i=0;i<6;i++) {
+    fftwf_free(cdigrad[i]);
+    fftwf_destroy_plan(Inverse_plan[i]);
+  }
+  fftwf_destroy_plan(Forward_plan);
+  free(seedtable);
+}
 
 // Setup variables for 2LPT initial condition
-void lpt_init(const int nc,const void* mem,const size_t size)
+void lpt_init(const int nc)
 {
   // nc: number of mesh per dimension
   ptrdiff_t local_nx,local_x_start;
@@ -52,59 +69,35 @@ void lpt_init(const int nc,const void* mem,const size_t size)
   //
   // Allocate memory
   //
-  if(mem==0) {
-    msg_abort(2002,"DAM: This shouldn't have happened\n");
 
-    // allocate memory here
-    size_t bytes=sizeof(fftwf_complex)*total_size;
-    int allocation_failed=0;
+  // allocate memory here
+  size_t bytes=0;
+  int allocation_failed=0;
 
-    // 1&2 displacement
-    for(int axes=0;axes<3;axes++) {
-      cdisp[axes]=fftwf_alloc_complex(total_size);
-      disp[axes]=(float *)cdisp[axes];
-      
-      cdisp2[axes]=fftwf_alloc_complex(total_size);
-      disp2[axes]=(float *)cdisp2[axes];
-      bytes+=2*sizeof(fftwf_complex)*total_size;
-      
-      allocation_failed=allocation_failed || (cdisp[axes]==0) || (cdisp2[axes]==0);
-    } 
+  // 1&2 displacement
+  for(int axes=0;axes<3;axes++) {
+    cdisp[axes]=fftwf_alloc_complex(total_size);
+    disp[axes]=(float *)cdisp[axes];
     
-    // 2LPT
-    for(int i=0;i<6;i++) {
-      cdigrad[i]=(fftwf_complex *)fftwf_alloc_complex(total_size);
-      digrad[i]=(float *)cdigrad[i];
+    bytes+=sizeof(fftwf_complex)*total_size;
       
-      bytes+=sizeof(fftwf_complex)*total_size;
-      allocation_failed=allocation_failed || (digrad[i]==0);
-    } 
+    allocation_failed=allocation_failed || (cdisp[axes]==0);
+  } 
     
-   if(allocation_failed)
-     msg_abort(2003,"Error: Failed to allocate memory for 2LPT."
-	       "Tried to allocate %d Mbytes\n",(int)(bytes/(1024*1024)));
-   
-   msg_printf(info,"%d Mbytes allocated for LPT\n",(int)(bytes/(1024*1024)));
-  }
-  else {
-    size_t bytes=0;
-    fftwf_complex* p=(fftwf_complex*)mem;
+  // 2LPT
+  for(int i=0;i<6;i++) {
+    cdigrad[i]=(fftwf_complex *)fftwf_alloc_complex(total_size);
+    digrad[i]=(float *)cdigrad[i];
     
-    for(int axes=0;axes<3;axes++) {
-      cdisp[axes]=p;
-      disp[axes]=(float *)p;
-      bytes+=sizeof(fftwf_complex)*total_size*2; //DAM: why 2??
-
-      p+=total_size;
-    }
-    for(int i=0;i<6;i++) {
-      cdigrad[i]=p;
-      digrad[i]=(float*) p;
-      bytes+=sizeof(fftwf_complex)*total_size;
-      p+=total_size;
-    }
-    assert(bytes<=size);
-  }
+    bytes+=sizeof(fftwf_complex)*total_size;
+    allocation_failed=allocation_failed || (digrad[i]==0);
+  } 
+    
+  if(allocation_failed)
+    msg_abort(2003,"Error: Failed to allocate memory for 2LPT."
+	      "Tried to allocate %d Mbytes\n",(int)(bytes/(1024*1024)));
+  
+  msg_printf(info,"%d Mbytes allocated for LPT\n",(int)(bytes/(1024*1024)));
 
   //
   // FFTW3 plans
@@ -136,8 +129,7 @@ void lpt_init(const int nc,const void* mem,const size_t size)
   seedtable=malloc(Nmesh*Nmesh*sizeof(unsigned int)); assert(seedtable);
 }
 
-void lpt_set_displacement(const int Seed,const double Box,
-			  const double a_init,Snapshot* const snapshot)
+void lpt_set_displacement(const int Seed,const double Box)
 {
   msg_printf(verbose,"Computing LPT displacement fields...\n");
   msg_printf(info,"Random Seed = %d\n",Seed);
@@ -432,22 +424,211 @@ void lpt_set_displacement(const int Seed,const double Box,
     fftwf_mpi_execute_dft_c2r(Disp2_plan[axes],cdisp2[axes],disp2[axes]);
   }
 
-  msg_printf(verbose,"Setting particle grid and displacements\n");
-  float x[3];
-  const float dx=Box/Nmesh;
+  gsl_rng_free(random_generator);
+}
+
+//Writing stuff
+static void my_fread(void *ptr,size_t size,size_t count,FILE *stream)
+{
+  size_t stat=fread(ptr,size,count,stream);
+  if(stat!=count)
+    msg_abort(123,"Error freading\n");
+}
+
+void write_snapshot(const char filebase[],const double a_init)
+{
+  float x[3],v[3];
+  char filename[256];
+  sprintf(filename,"%s.%d",filebase,comm_this_node());
+
+  FILE* fp=fopen(filename,"w");
+  if(fp==0)
+    msg_abort(9000,"Error: Unable to write to file: %s\n",filename);
+
+  const long long npt=((long long)(Nmesh*Nmesh))*Nmesh;
+  const int np=Local_nx*Nmesh*Nmesh;
+  const double boxsize=Param.boxsize;
+  const double omega_m=Param.omega_m;
+  const double h=Param.h;
+  const float dx=Param.boxsize/Nmesh;
   const float vfac=100.0f/a_init;   // km/s; H0= 100 km/s/(h^-1 Mpc)
   const float D1=GrowthFactor(a_init);
   const float D2=GrowthFactor2(a_init);
   const float Dv=Vgrowth(a_init); // dD_{za}/dTau
   const float Dv2=Vgrowth2(a_init); // dD_{2lpt}/dTau
-  Particle* p=snapshot->p;
-
   double nmesh3_inv=1.0/pow((double)Nmesh,3.0);
+
+  msg_printf(normal,"Longid is used for GADGET snapshot. %d-byte.\n", 
+	     sizeof(unsigned long long));
+
+  long long np_send=np,np_total;
+  MPI_Reduce(&np_send,&np_total,1,MPI_LONG_LONG, MPI_SUM,0,MPI_COMM_WORLD);
+  MPI_Bcast(&np_total,1,MPI_LONG_LONG,0,MPI_COMM_WORLD);
+
+  if(np_total!=npt)
+    msg_abort(123,"%ld %ld\n",np_total,npt);
+
+  GadgetHeader header; assert(sizeof(GadgetHeader)==256);
+  memset(&header,0,sizeof(GadgetHeader));
+
+  const double rho_crit=27.7455;
+  const double m=omega_m*rho_crit*pow(boxsize,3.0)/np_total;
+  
+  header.np[1]=np;
+  header.mass[1]=m;
+  header.time=a_init;
+  header.redshift=1.0/header.time-1;
+  header.np_total[1]=(unsigned int)np_total;
+  header.np_total_highword[1]=(unsigned int)(np_total >> 32);
+  header.num_files=comm_nnode();
+  header.boxsize=boxsize;
+  header.omega0=omega_m;
+  header.omega_lambda=1.0-omega_m;
+  header.hubble_param=h;
+  header.flag_gadgetformat=1;
+
+  int blklen=sizeof(GadgetHeader);
+  fwrite(&blklen,sizeof(blklen),1,fp);
+  fwrite(&header,sizeof(GadgetHeader),1,fp);
+  fwrite(&blklen,sizeof(blklen),1,fp);
+
+  // position
+  blklen=np*sizeof(float)*3;
+  fwrite(&blklen,sizeof(blklen),1,fp);
+  for(int i=0;i<Local_nx;i++) {
+    x[0]=(Local_x_start+i+0.5f)*dx;
+    for(int j=0;j<Nmesh;j++) {
+      x[1]=(j+0.5f)*dx;
+      for(int k=0;k<Nmesh;k++) {
+	x[2]=(j+0.5f)*dx;
+
+	for(int axes=0;axes<3;axes++) {
+	  float dis=disp[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
+	  float dis2=nmesh3_inv*disp2[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
+	  x[axes]+=D1*dis+D2*dis2;
+	}
+	fwrite(x,sizeof(float),3,fp);
+      }
+    }
+  }
+  fwrite(&blklen,sizeof(blklen),1,fp);
+
+  // velocity
+  const float vfac2=1.0/sqrt(a_init);
+  fwrite(&blklen,sizeof(blklen),1,fp);
+  for(int i=0;i<Local_nx;i++) {
+    for(int j=0;j<Nmesh;j++) {
+      for(int k=0;k<Nmesh;k++) {
+	for(int axes=0;axes<3;axes++) {
+	  float dis=disp[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
+	  float dis2=disp2[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
+
+	  v[axes]=vfac*vfac2*(Dv*dis+Dv2*dis2);
+	}
+	fwrite(v,sizeof(float),3,fp);
+      }
+    }
+  }
+  fwrite(&blklen,sizeof(blklen),1,fp);
+
+  // id
+  blklen=np*sizeof(unsigned long long);
+  fwrite(&blklen,sizeof(blklen),1,fp);
+  long long id0=(long long)Local_x_start*Nmesh*Nmesh+1;
+  for(int i=0;i<np;i++) {
+    unsigned long long id_out=id0+i;
+    fwrite(&id_out,sizeof(unsigned long long),1,fp); 
+  }
+  fwrite(&blklen,sizeof(blklen),1,fp);
+
+  fclose(fp);
+
+  msg_printf(normal, "snapshot %s written\n", filebase);
+}
+
+static FILE *new_gadget_file(char *fname,GadgetHeader header)
+{
+  FILE *f=fopen(fname,"w");
+  int blklen=sizeof(GadgetHeader);
+  fwrite(&blklen,sizeof(blklen),1,f);
+  fwrite(&header,sizeof(GadgetHeader),1,f);
+  fwrite(&blklen,sizeof(blklen),1,f);
+
+  //Beginning of first block
+  blklen=0;
+  fwrite(&blklen,sizeof(blklen),1,f);
+
+  return f;
+}
+
+static void end_gadget_file(FILE *f)
+{
+  int blklen=0;
+  fwrite(&blklen,sizeof(blklen),1,f);
+  fclose(f);
+}
+
+void write_snapshot_cola(const char filebase[],const double a_init)
+{
+  Particle part;
+  char fname[256];
+  int blklen,ibox[3];
+  unsigned long long *np_in_box,*np_in_box_total;
+  int *box_touched,*box_touched_total;
+  FILE **file_array;
+  int nbside=Param.nbox_per_side;
+  int nboxes=nbside*nbside*nbside;
+
+  np_in_box=(unsigned long long *)calloc(nboxes,sizeof(unsigned long long));
+  np_in_box_total=(unsigned long long *)calloc(nboxes,sizeof(unsigned long long));
+  box_touched=(int *)calloc(nboxes,sizeof(int));
+  box_touched_total=(int *)calloc(nboxes,sizeof(int));
+  file_array=(FILE **)malloc(nboxes*sizeof(FILE *));
+
+  const long long npt=((long long)(Nmesh*Nmesh))*Nmesh;
+  const int np=Local_nx*Nmesh*Nmesh;
+  const double boxsize=Param.boxsize;
+  const double omega_m=Param.omega_m;
+  const double h=Param.h;
+  const float dx=Param.boxsize/Nmesh;
+  const float vfac=100.0f/a_init;   // km/s; H0= 100 km/s/(h^-1 Mpc)
+  const float vfac2=1.0/sqrt(a_init);
+  const float D1=GrowthFactor(a_init);
+  const float D2=GrowthFactor2(a_init);
+  const float Dv=Vgrowth(a_init); // dD_{za}/dTau
+  const float Dv2=Vgrowth2(a_init); // dD_{2lpt}/dTau
+  double nmesh3_inv=1.0/pow((double)Nmesh,3.0);
+
+  msg_printf(normal,"Longid is used for GADGET snapshot. %d-byte.\n", 
+	     sizeof(unsigned long long));
+
+  long long np_send=np,np_total;
+  MPI_Reduce(&np_send,&np_total,1,MPI_LONG_LONG, MPI_SUM,0,MPI_COMM_WORLD);
+  MPI_Bcast(&np_total,1,MPI_LONG_LONG,0,MPI_COMM_WORLD);
+
+  if(np_total!=npt)
+    msg_abort(123,"%ld %ld\n",np_total,npt);
+
+  GadgetHeader header; assert(sizeof(GadgetHeader)==256);
+  memset(&header,0,sizeof(GadgetHeader));
+
+  const double rho_crit=27.7455;
+  const double m=omega_m*rho_crit*pow(boxsize,3.0)/np_total;
+  
+  header.mass[1]=m;
+  header.time=a_init;
+  header.redshift=1.0/header.time-1;
+  header.boxsize=boxsize;
+  header.omega0=omega_m;
+  header.omega_lambda=1.0-omega_m;
+  header.hubble_param=h;
+  header.flag_gadgetformat=0;
+
+  float x[3];
   long long id=(long long)Local_x_start*Nmesh*Nmesh+1;
-
-  msg_printf(debug,"initial growth factor %5.3f %e %e\n",a_init,D1,D2);
-  msg_printf(debug,"initial velocity factor %5.3f %e %e\n",a_init,vfac*Dv,vfac*Dv2);
-
+  int thisnode=comm_this_node();
+  double inv_l_subbox=nbside/boxsize;
+  double l_subbox=boxsize/nbside;
   for(int i=0;i<Local_nx;i++) {
     x[0]=(Local_x_start+i+0.5f)*dx;
     for(int j=0;j<Nmesh;j++) {
@@ -455,28 +636,117 @@ void lpt_set_displacement(const int Seed,const double Box,
       for(int k=0;k<Nmesh;k++) {
 	x[2]=(k+0.5f)*dx;
 
+	int index_box;
 	for(int axes=0;axes<3;axes++) {
 	  float dis=disp[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
 	  float dis2=nmesh3_inv*disp2[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
+
+	  //Compute position and velocity
+	  part.x[axes]=x[axes]+D1*dis+D2*dis2;
+	  part.v[axes]=vfac*vfac2*(Dv*dis+Dv2*dis2);
+	  part.dx1[axes]=dis;
+	  part.dx2[axes]=dis2;
+
+	  // Wrap in box
+	  if(part.x[axes]>=boxsize) part.x[axes]-=boxsize;
+	  else if(part.x[axes]<0) part.x[axes]+=boxsize;
+
+	  //Compute which box
+	  ibox[axes]=(int)(inv_l_subbox*part.x[axes]);
 	  
-	  p->x[axes]=x[axes]+D1*dis+D2*dis2;
-	  p->v[axes]=vfac*(Dv*dis+Dv2*dis2);
-	  p->dx1[axes]=dis; // Psi_1(0)
-	  p->dx2[axes]=dis2; // Psi_2(0)
+	  //Compute new origin
+	  part.x[axes]-=ibox[axes]*l_subbox;
 	}
-	p->id=id++;
-	p++;
+	part.id=id;
+	id++;
+	index_box=ibox[0]+nbside*(ibox[1]+nbside*ibox[2]);
+
+	//Open file if not created yet
+	if(box_touched[index_box]==0) {
+	  sprintf(fname,"%s_box%dp%dp%d.%d",filebase,
+		  ibox[0],ibox[1],ibox[2],thisnode);
+	  file_array[index_box]=new_gadget_file(fname,header);
+	  box_touched[index_box]=1;
+	}
+
+
+	np_in_box[index_box]++;
+	fwrite(&part,sizeof(Particle),1,file_array[index_box]);
       }
     }
   }
 
-  snapshot->np_local=Local_nx*Nmesh*Nmesh;
-  snapshot->a=a_init;
+  for(int i=0;i<nboxes;i++) {
+    if(box_touched[i]>0)
+      end_gadget_file(file_array[i]);
+  }
 
-  gsl_rng_free(random_generator);
-}
+  MPI_Allreduce(np_in_box,np_in_box_total,nboxes,
+		MPI_UNSIGNED_LONG_LONG,MPI_SUM,MPI_COMM_WORLD);
+  MPI_Allreduce(box_touched,box_touched_total,nboxes,
+		MPI_INT,MPI_SUM,MPI_COMM_WORLD);
 
-int lpt_get_local_nx(void)
-{
-  return Local_nx;
+  if(thisnode==0) {
+    unsigned long long ntot=0;
+    for(int i=0;i<nboxes;i++) {
+      ibox[0]=i%nbside;
+      ibox[1]=((i-ibox[0])/nbside)%nbside;
+      ibox[2]=(i-ibox[0]-ibox[1]*nbside)/(nbside*nbside);
+      msg_printf(normal,"%llu particles in box (%d,%d,%d), from %d nodes\n",
+		 np_in_box_total[i],ibox[0],ibox[1],ibox[2],box_touched_total[i]);
+      ntot+=np_in_box_total[i];
+    }
+    msg_printf(normal,"Total: %llu particles\n",ntot);
+  }
+
+  //Fix headers and particle numbers
+  for(int i=0;i<nboxes;i++) {
+    if(np_in_box[i]>0) {
+      //Compute box coordinates
+      ibox[0]=i%nbside;
+      ibox[1]=((i-ibox[0])/nbside)%nbside;
+      ibox[2]=(i-ibox[0]-ibox[1]*nbside)/(nbside*nbside);
+
+      //Open file
+      sprintf(fname,"%s_box%dp%dp%d.%d",filebase,
+	      ibox[0],ibox[1],ibox[2],thisnode);
+      file_array[i]=fopen(fname,"r+");
+
+      //Read header
+      my_fread(&blklen,sizeof(int),1,file_array[i]);
+      if(blklen!=sizeof(GadgetHeader))
+	msg_abort(123,"shit1!\n");
+      my_fread(&header,sizeof(GadgetHeader),1,file_array[i]);
+      my_fread(&blklen,sizeof(int),1,file_array[i]);
+      if(blklen!=sizeof(GadgetHeader))
+	msg_abort(123,"shit2!\n");
+      rewind(file_array[i]);
+
+      header.np[1]=(int)(np_in_box[i]);
+      header.np_total[1]=(unsigned int)(np_in_box_total[i]);
+      header.np_total_highword[1]=(unsigned int)(np_in_box_total[i] >> 32);
+      header.num_files=box_touched_total[i];
+      my_fread(&blklen,sizeof(int),1,file_array[i]);
+      if(blklen!=sizeof(GadgetHeader))
+	msg_abort(123,"shit3! %d %d\n",blklen,sizeof(GadgetHeader));
+      fwrite(&header,sizeof(GadgetHeader),1,file_array[i]);
+      my_fread(&blklen,sizeof(int),1,file_array[i]);
+      if(blklen!=sizeof(GadgetHeader))
+	msg_abort(123,"shit4! %d %d\n",blklen,sizeof(GadgetHeader));
+
+      long int block_size=np_in_box[i]*sizeof(Particle);
+      blklen=np_in_box[i]*sizeof(Particle);
+      fwrite(&blklen,sizeof(int),1,file_array[i]);
+      fseek(file_array[i],block_size,SEEK_CUR);
+      fwrite(&blklen,sizeof(int),1,file_array[i]);
+      fclose(file_array[i]);
+    }
+  }
+
+  free(box_touched);
+  free(box_touched_total);
+  free(np_in_box);
+  free(np_in_box_total);
+  free(file_array);
+  msg_printf(normal, "snapshot %s written\n", filebase);
 }

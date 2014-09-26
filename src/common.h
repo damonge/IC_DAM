@@ -40,16 +40,6 @@ typedef struct {
   long long id;
 } Particle;
 
-typedef struct {
-  Particle* p;
-  int np_local;
-  int np_allocated;
-  long long np_total;
-  float np_average;
-  float a;
-  int nc;
-} Snapshot;
-
 //////
 // Defined in comm.h
 void comm_init(const int nc_part,const float boxsize);
@@ -70,22 +60,9 @@ double Vgrowth2(const double a);
 
 //////
 // Defined in lpt.h
-void lpt_init(const int nc, const void* mem, const size_t size);
-void lpt_set_displacement(const int Seed,const double Box,
-			  const double a_init,Snapshot* const snapshot);
-int lpt_get_local_nx(void);
-
-
-//////
-// Defined in mem.h
-typedef struct {
-  void *mem1, *mem2;
-  size_t size1, size2;
-} Memory;
-Snapshot* allocate_snapshot(const int nc, const int nx,const double np_alloc_factor,
-			    void* const mem,const size_t mem_size);
-void allocate_shared_memory(const int nc,const double np_alloc_factor,
-			    Memory* const mem);
+void lpt_init(const int nc);
+void lpt_end(void);
+void lpt_set_displacement(const int Seed,const double Box);
 
 
 //////
@@ -135,7 +112,7 @@ typedef struct {
   char fill[56];
 } GadgetHeader;
 
-void write_snapshot(const char filebase[],Snapshot const * const snapshot);
-void write_snapshot_cola(const char filebase[],Snapshot const * const snapshot);
+void write_snapshot(const char filebase[],const double a_init);
+void write_snapshot_cola(const char filebase[],const double a_init);
 
 #endif //_COMMON_H_
