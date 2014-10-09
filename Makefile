@@ -1,5 +1,5 @@
 #
-# cola_halo
+# IC_DAM
 #   
 
 # Define OPENMP to enable MPI+OpenMP hybrid parallelization
@@ -21,7 +21,7 @@ DIR_PATH = $(FFTW3_DIR) $(GSL_DIR)
 CFLAGS += $(foreach dir, $(DIR_PATH), -I$(dir)/include)
 LIBS   += $(foreach dir, $(DIR_PATH), -L$(dir)/lib)
 
-EXEC = cola_halo
+EXEC = IC_DAM
 all: $(EXEC)
 
 OBJS := src/main.o
@@ -37,7 +37,7 @@ ifdef OPENMP
   LIBS += -lfftw3f_omp
 endif
 
-cola_halo: $(OBJS)
+IC_DAM: $(OBJS)
 	$(CC) $(CFLAGS) $(OBJS) $(LIBS) -o $@
 
 src/main.o: src/main.c src/common.h
@@ -56,7 +56,7 @@ cleaner :
 	rm -f $(EXEC) $(OBJS) $(OBJS2) *~ src/*~
 
 run:
-	mpirun -n 2 ./cola_halo param.ini
+	mpirun -n 2 ./IC_DAM param.ini
 
 dependence:
 	gcc -MM -MG *.c

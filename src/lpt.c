@@ -495,17 +495,20 @@ void write_snapshot(const char filebase[],const double a_init)
   // position
   blklen=np*sizeof(float)*3;
   fwrite(&blklen,sizeof(blklen),1,fp);
+  float x0[3];
   for(int i=0;i<Local_nx;i++) {
-    x[0]=(Local_x_start+i+0.5f)*dx;
+    x0[0]=(Local_x_start+i+0.5f)*dx;
     for(int j=0;j<Nmesh;j++) {
-      x[1]=(j+0.5f)*dx;
+      x0[1]=(j+0.5f)*dx;
       for(int k=0;k<Nmesh;k++) {
-	x[2]=(j+0.5f)*dx;
+	x0[2]=(k+0.5f)*dx;
 
 	for(int axes=0;axes<3;axes++) {
 	  float dis=disp[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
 	  float dis2=nmesh3_inv*disp2[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
-	  x[axes]+=D1*dis+D2*dis2;
+	  x[axes]=x0[axes]+D1*dis+D2*dis2;
+	  if(x[axes]>=boxsize) x[axes]-=boxsize;
+	  else if(x[axes]<0) x[axes]+=boxsize;
 	}
 	fwrite(x,sizeof(float),3,fp);
       }
@@ -521,7 +524,7 @@ void write_snapshot(const char filebase[],const double a_init)
       for(int k=0;k<Nmesh;k++) {
 	for(int axes=0;axes<3;axes++) {
 	  float dis=disp[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
-	  float dis2=disp2[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
+	  float dis2=nmesh3_inv*disp2[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
 
 	  v[axes]=vfac*vfac2*(Dv*dis+Dv2*dis2);
 	}
@@ -585,6 +588,8 @@ void write_snapshot_cola(const char filebase[],const double a_init)
   box_touched_total=(int *)calloc(nboxes,sizeof(int));
   file_array=(FILE **)malloc(nboxes*sizeof(FILE *));
 
+  printf(" THERE ARE %d BOXES\n",nboxes);
+
   const long long npt=((long long)(Nmesh*Nmesh))*Nmesh;
   const int np=Local_nx*Nmesh*Nmesh;
   const double boxsize=Param.boxsize;
@@ -618,23 +623,23 @@ void write_snapshot_cola(const char filebase[],const double a_init)
   header.mass[1]=m;
   header.time=a_init;
   header.redshift=1.0/header.time-1;
-  header.boxsize=boxsize;
+  header.boxsize=boxsize/nbside;
   header.omega0=omega_m;
   header.omega_lambda=1.0-omega_m;
   header.hubble_param=h;
   header.flag_gadgetformat=0;
 
-  float x[3];
+  float x0[3];
   long long id=(long long)Local_x_start*Nmesh*Nmesh+1;
   int thisnode=comm_this_node();
   double inv_l_subbox=nbside/boxsize;
   double l_subbox=boxsize/nbside;
   for(int i=0;i<Local_nx;i++) {
-    x[0]=(Local_x_start+i+0.5f)*dx;
+    x0[0]=(Local_x_start+i+0.5f)*dx;
     for(int j=0;j<Nmesh;j++) {
-      x[1]=(j+0.5f)*dx;
+      x0[1]=(j+0.5f)*dx;
       for(int k=0;k<Nmesh;k++) {
-	x[2]=(k+0.5f)*dx;
+	x0[2]=(k+0.5f)*dx;
 
 	int index_box;
 	for(int axes=0;axes<3;axes++) {
@@ -642,18 +647,21 @@ void write_snapshot_cola(const char filebase[],const double a_init)
 	  float dis2=nmesh3_inv*disp2[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
 
 	  //Compute position and velocity
-	  part.x[axes]=x[axes]+D1*dis+D2*dis2;
+	  part.x[axes]=x0[axes]+D1*dis+D2*dis2;
 	  part.v[axes]=vfac*vfac2*(Dv*dis+Dv2*dis2);
 	  part.dx1[axes]=dis;
 	  part.dx2[axes]=dis2;
 
-	  // Wrap in box
+	  if(part.x[axes]<0) part.x[axes]+=boxsize;
 	  if(part.x[axes]>=boxsize) part.x[axes]-=boxsize;
-	  else if(part.x[axes]<0) part.x[axes]+=boxsize;
+	  if(part.x[axes]<0) part.x[axes]+=boxsize;
 
-	  //Compute which box
-	  ibox[axes]=(int)(inv_l_subbox*part.x[axes]);
-	  
+	  //Compute which subbox
+	  int ib=(int)(inv_l_subbox*part.x[axes]);
+	  if(ib<0 || ib>=nbside)
+	    msg_abort(123,"Wrong subbox index! %d %d\n",ib,nbside);
+	  ibox[axes]=ib;
+
 	  //Compute new origin
 	  part.x[axes]-=ibox[axes]*l_subbox;
 	}
@@ -665,6 +673,12 @@ void write_snapshot_cola(const char filebase[],const double a_init)
 	if(box_touched[index_box]==0) {
 	  sprintf(fname,"%s_box%dp%dp%d.%d",filebase,
 		  ibox[0],ibox[1],ibox[2],thisnode);
+	  /*
+	  printf("Creating file %s\n",fname);
+	  printf("  %d %d %d\n",ibox[0],ibox[1],ibox[2]);
+	  printf("  %lE %lE %lE %lE\n",part.x[0],part.x[1],part.x[2],boxsize);
+	  printf("  %d %d %d\n",(int)(inv_l_subbox*part.x[0]),(int)(inv_l_subbox*part.x[1]),(int)(inv_l_subbox*part.x[2]));
+	  */
 	  file_array[index_box]=new_gadget_file(fname,header);
 	  box_touched[index_box]=1;
 	}
