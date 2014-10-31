@@ -20,8 +20,6 @@ typedef struct {
 
   char power_spectrum_filename[256];
   char init_filename[256];
-
-  int loglevel;
 } Parameters;
 Parameters Param;
 
@@ -37,7 +35,11 @@ typedef struct {
   float v[3];
   float dx1[3];
   float dx2[3];
-  long long id;
+#ifdef _LONGIDS
+  unsigned long long id;
+#else //_LONGIDS
+  unsigned int id;
+#endif //_LONGIDS
 } Particle;
 
 //////
@@ -51,7 +53,8 @@ int comm_nnode(void);
 // Defined in cosmo.h
 double PowerSpec(const double k);
 void cosmo_init(const char filename[],const double sigma8,
-		const double omega_m,const double omega_lambda);
+		const double omega_m,const double omega_lambda,
+		const double a_initial);
 double GrowthFactor(const double a);
 double GrowthFactor2(const double a);
 double Vgrowth(const double a);
@@ -67,20 +70,15 @@ void lpt_set_displacement(const int Seed,const double Box);
 
 //////
 // Defined in msg.h
-enum LogLevel {verbose,debug,normal,info,warn,error,fatal,silent};
-
 void msg_init(void);
-void msg_set_loglevel(const enum LogLevel log_level);
-void msg_printf(const enum LogLevel level,const char *fmt, ...);
+void msg_printf(const char *fmt, ...);
 void msg_abort(const int errret,const char *fmt, ...);
 
 
 //////
 // Defined in timer.h
-enum Category {Init,LPT,COLA,Snp};
-enum SubCategory {all,fft,assign,force_mesh,pforce,check,
-		  comm,evolve,write,kd_build,kd_link,
-		  interp,global,sub};
+enum Category {Init,LPT,Snp};
+enum SubCategory {all};
 
 void timer_set_category(enum Category new_cat);
 void timer_start(enum SubCategory sub);

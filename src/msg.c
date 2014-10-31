@@ -9,7 +9,6 @@
 #include "common.h"
 
 static int myrank=-1;
-static int Log_level;
 
 // Initialize using msg_ functions.
 void msg_init()
@@ -17,14 +16,9 @@ void msg_init()
   MPI_Comm_rank(MPI_COMM_WORLD,&myrank);
 }
 
-void msg_set_loglevel(const enum LogLevel lv)
+void msg_printf(const char *fmt, ...)
 {
-  Log_level=lv;
-}
-
-void msg_printf(const enum LogLevel msg_level,const char *fmt, ...)
-{
-  if(myrank==0 && msg_level>=Log_level) {
+  if(myrank==0) {
     va_list argp;
 
     va_start(argp,fmt);

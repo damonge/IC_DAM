@@ -9,13 +9,10 @@
 #include "common.h"
 
 static int ThisNode,NNode;
-static int Tag;
-
-static float BoxSize;
 
 void comm_init(const int nc_p,const float boxsize)
 {
-  msg_printf(verbose, "comm initialization\n");
+  msg_printf("comm initialization\n");
 
   MPI_Comm_rank(MPI_COMM_WORLD, &ThisNode);
   MPI_Comm_size(MPI_COMM_WORLD, &NNode);
@@ -34,11 +31,8 @@ void comm_init(const int nc_p,const float boxsize)
 		MPI_COMM_WORLD);
 
   for(int i=0;i<NNode;i++)
-    msg_printf(debug,"LPT Task=%d x=%d..%d\n",i,local_x_table[i],
+    msg_printf("LPT Task=%d x=%d..%d\n",i,local_x_table[i],
 	       local_x_table[i]+local_nx_table[i]-1);
-
-  BoxSize=boxsize;
-  Tag=600;
 
   free(local_x_table);
 }

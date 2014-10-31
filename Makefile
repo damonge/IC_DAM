@@ -2,17 +2,13 @@
 # IC_DAM
 #   
 
-# Define OPENMP to enable MPI+OpenMP hybrid parallelization
-#OPENMP  = -fopenmp # -openmp for Intel, -fopenmp for gcc
-
 CC      = mpicc -std=c99 
 WOPT    ?= -Wall
-CFLAGS  := -O3 $(WOPT) $(OPENMP)
-CFLAGS += #-D_DAM_SAVEMEM -D_LONGIDS -D_LIGHTCONE #-D_DAM_NOMEASURE -D_DAM_NOT_WRITE_INIT
+CFLAGS  := -O3 $(WOPT)
+CFLAGS += #-D_LONGIDS #-D_DAM_SAVEMEM
 LIBS    := -lm
 
 # Define paths of FFTW3 & GSL libraries if necessary.
-
 FFTW3_DIR ?= /home/damonge
 GSL_DIR   ?= 
 
@@ -33,10 +29,6 @@ LIBS += -lgsl -lgslcblas
 LIBS += -lfftw3f_mpi -lfftw3f
 
 
-ifdef OPENMP
-  LIBS += -lfftw3f_omp
-endif
-
 IC_DAM: $(OBJS)
 	$(CC) $(CFLAGS) $(OBJS) $(LIBS) -o $@
 
@@ -48,15 +40,8 @@ src/cosmo.o: src/cosmo.c src/common.h
 src/read_param.o: src/read_param.c src/common.h
 src/timer.o: src/timer.c src/common.h
 
-.PHONY: clean run dependence
 clean :
-	rm -f $(EXEC) $(OBJS) $(OBJS2)
+	rm -f $(EXEC) $(OBJS)
 
 cleaner :
-	rm -f $(EXEC) $(OBJS) $(OBJS2) *~ src/*~
-
-run:
-	mpirun -n 2 ./IC_DAM param.ini
-
-dependence:
-	gcc -MM -MG *.c
+	rm -f $(EXEC) $(OBJS) *~ src/*~

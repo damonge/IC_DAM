@@ -17,7 +17,6 @@
 
 #define WORKSIZE 100000
 
-static double Norm;
 static int NPowerTable;
 static double r_tophat;
 static double Omega, OmegaLambda;
@@ -27,17 +26,10 @@ static struct pow_table
   double logk, logD;
 } *PowerTable;
 
-#define N_A_GROWTH 1000
-static struct growth_table
-{
-  double a,gf;
-} *GrowthTable;
-
 static void read_power_table_camb(const char filename[])
 {
   double k, p;
   double fac= 1.0/(2.0*M_PI*M_PI);
-  Norm= 1.0;
 
   FILE* fp= fopen(filename,"r");
   if(!fp)
@@ -52,8 +44,7 @@ static void read_power_table_camb(const char filename[])
       break;
   } while(1);
 
-  msg_printf(verbose,
-	     "Found %d pairs of values in input spectrum table\n",NPowerTable);
+  msg_printf("Found %d pairs of values in input spectrum table\n",NPowerTable);
 
   PowerTable=malloc(NPowerTable*sizeof(struct pow_table));
 
@@ -102,7 +93,7 @@ double PowerSpec(const double k)
 
   const double Delta2=pow(10.0,logD);
 
-  double P=Norm*Delta2/(4.0*M_PI*k*k*k);
+  double P=Delta2/(4.0*M_PI*k*k*k);
 
   return P;
 }
@@ -147,10 +138,9 @@ static double TopHatSigma2(double R)
   // note: 500/R is here chosen as (effectively) infinity integration boundary
 }
 
-static double normalize_power(const double sigma8)
+static void normalize_power(const double sigma8)
 {
-  //DAM: sigma8 is not being taken into account!
-  // Assume that input power spectrum already has a proper sigma8
+  //DAM: this only checks that the actual sigma8 is right
   const double R8=8.0; // 8 Mpc
 
   double res=TopHatSigma2(R8); 
@@ -160,15 +150,40 @@ static double normalize_power(const double sigma8)
     msg_abort(3010,"Input sigma8 %f is far from target sigma8 %f\n",
 	      sigma8_input,sigma8);
 
-  msg_printf(info,"Input power spectrum sigma8 %f\n",sigma8_input);
-
-  return 1.0;
+  msg_printf("Input power spectrum sigma8 %f\n",sigma8_input);
 }
 
 static double omega_a(const double a)
 {
   return Omega/(Omega+(1-Omega-OmegaLambda)*a+
 		 OmegaLambda*a*a*a);
+}
+
+static double growth_int(double a,void *param)
+{
+  return pow(a/(Omega+(1-Omega-OmegaLambda)*a+OmegaLambda*a*a*a),1.5);
+}
+
+static double growth(double a)
+{
+  double hubble_a;
+
+  hubble_a=sqrt(Omega/(a*a*a)+(1-Omega-OmegaLambda)/(a*a)+OmegaLambda);
+
+  double result, abserr;
+  gsl_integration_workspace *workspace;
+  gsl_function F;
+
+  workspace=gsl_integration_workspace_alloc(WORKSIZE);
+
+  F.function=&growth_int;
+
+  gsl_integration_qag(&F,0,a,0,1.0e-8,WORKSIZE,GSL_INTEG_GAUSS41, 
+		      workspace,&result,&abserr);
+
+  gsl_integration_workspace_free(workspace);
+
+  return hubble_a*result;
 }
 
 static double Qfactor(const double a)
@@ -180,17 +195,7 @@ static double Qfactor(const double a)
 
 double GrowthFactor(const double a)
 {
-  if(a<0||a>1)
-    msg_abort(3000,"Wrong scale factor %lf\n",a);
-  if(a==1) return 1;
-  else if(a==0) return 0;
-  else {
-    int ibin=(int)(a*N_A_GROWTH);
-    double u=(a-GrowthTable[ibin].a)*N_A_GROWTH;
-    double gfac=(1-u)*GrowthTable[ibin].gf+u*GrowthTable[ibin+1].gf;
-
-    return gfac;
-  }
+  return growth(a)/growth(1.0);
 }
 
 double GrowthFactor2(const double a)
@@ -221,74 +226,28 @@ double Vgrowth2(const double a) //Returns dD2/dTau
   return q*d2*f2/a;
 }
 
-static double growth_int(double a,void *param)
-{
-  return pow(a/(Omega+(1-Omega-OmegaLambda)*a+OmegaLambda*a*a*a),1.5);
-}
-
-static double growth(double a)
-{
-  double hubble_a;
-
-  hubble_a=sqrt(Omega/(a*a*a)+(1-Omega-OmegaLambda)/(a*a)+OmegaLambda);
-
-  double result, abserr;
-  gsl_integration_workspace *workspace;
-  gsl_function F;
-
-  workspace=gsl_integration_workspace_alloc(WORKSIZE);
-
-  F.function=&growth_int;
-
-  gsl_integration_qag(&F,0,a,0,1.0e-8,WORKSIZE,GSL_INTEG_GAUSS41, 
-		      workspace,&result,&abserr);
-
-  gsl_integration_workspace_free(workspace);
-
-  return hubble_a*result;
-}
-
-static void get_growth_factor(void)
-{
-  int ii;
-  double g0=growth(1.0);
-  GrowthTable=malloc(N_A_GROWTH*sizeof(struct growth_table));
-
-  for(ii=0;ii<N_A_GROWTH;ii++) {
-    double a=(double)ii/N_A_GROWTH;
-    double gf=growth(a)/g0;
-
-    GrowthTable[ii].a=a;
-    GrowthTable[ii].gf=gf;
-  }
-}
-
 void cosmo_init(const char filename[],const double sigma8,
-		const double omega_m,const double omega_lambda)
+		const double omega_m,const double omega_lambda,
+		const double a_initial)
 {
   Omega=omega_m;
   OmegaLambda=omega_lambda;
 
-  int myrank;
-  MPI_Comm_rank(MPI_COMM_WORLD,&myrank);
+  int myrank=comm_this_node();
 
   if(myrank==0) {
     read_power_table_camb(filename);
-    Norm=normalize_power(sigma8);
-    get_growth_factor();
+    normalize_power(sigma8);
   }
 
-  msg_printf(normal,"Powerspectrum file: %s\n",filename);
+  msg_printf("Powerspectrum file: %s\n",filename);
+  msg_printf("Growth at a=%lE is %lE\n",a_initial,GrowthFactor(a_initial));
 
   MPI_Bcast(&NPowerTable,1,MPI_INT,0,MPI_COMM_WORLD);
   if(myrank!=0) {
     PowerTable=malloc(NPowerTable*sizeof(struct pow_table));
-    GrowthTable=malloc(N_A_GROWTH*sizeof(struct growth_table));
   }
 
   MPI_Bcast(PowerTable,NPowerTable*sizeof(struct pow_table),MPI_BYTE,0,
-	    MPI_COMM_WORLD);
-  MPI_Bcast(&Norm,1,MPI_DOUBLE,0,MPI_COMM_WORLD);
-  MPI_Bcast(GrowthTable,N_A_GROWTH*sizeof(struct growth_table),MPI_BYTE,0,
 	    MPI_COMM_WORLD);
 }

@@ -85,14 +85,12 @@ static int read_parameter_file(char const *fname,Parameters *param)
       param->sigma8=atof(s2);
     else if(!strcmp(s1,"np_alloc_factor="))
       param->np_alloc_factor=atof(s2);
-    else if(!strcmp(s1,"loglevel="))
-      param->loglevel=atoi(s2);
     else if(!strcmp(s1,"powerspectrum="))
       sprintf(param->power_spectrum_filename,"%s",s2);
     else if(!strcmp(s1,"init_fname="))
       sprintf(param->init_filename,"%s",s2);
     else
-      msg_printf(info,"Unknown parameter %s\n",s1);
+      msg_printf("Unknown parameter %s\n",s1);
   }
   fclose(fi);
 

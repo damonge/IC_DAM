@@ -4,13 +4,11 @@
 
 #include "common.h"
 
-#define nCategory 4
-#define nSubCategory 14
+#define nCategory 3
+#define nSubCategory 1
 
-static const char * CatName[]={"Init","2LPT","COLA","Snapshot"};
-static const char * SubName[]={"","fft","assign","force_mesh","pforce",
-			       "check","comm","evolve","write","kd_build",
-			       "kd_link","interpolate","global","smalldata"};
+static const char * CatName[]={"Init","2LPT","Snapshot"};
+static const char * SubName[]={""};
 
 static int initialized=0;
 static enum Category Cat;
@@ -27,7 +25,7 @@ static double now()
 void timer_init()
 {
   for(int i=0;i<nCategory;i++) {
-    for(int j=0;j<nCategory;j++) {
+    for(int j=0;j<nSubCategory;j++) {
       Time[i][j]=0.0;
       tBegin[i][j]=0.0;
     }
@@ -68,16 +66,16 @@ void timer_print()
     total+=Time[i][0];
 
   for(int icat=0;icat<nCategory;icat++) {
-    msg_printf(info,"%-16s %7.2f   %4.1f%%\n", 
+    msg_printf("%-16s %7.2f   %4.1f%%\n", 
 	       CatName[icat],Time[icat][0],100.0*Time[icat][0]/total);
 
     for(int isub=1;isub<nSubCategory;isub++) {
       if(Time[icat][isub]>0.0)
-	msg_printf(info,"  %-14s %7.2f   %4.1f%%\n", 
+	msg_printf("  %-14s %7.2f   %4.1f%%\n", 
 	      SubName[isub],Time[icat][isub],100*Time[icat][isub]/total);
     }
   }
-  msg_printf(info,"----------------------------------\n");
-  msg_printf(info,"%-16s %7.2f sec\n", "Total",total);
+  msg_printf("----------------------------------\n");
+  msg_printf("%-16s %7.2f sec\n", "Total",total);
 
 }

@@ -97,7 +97,7 @@ void lpt_init(const int nc)
     msg_abort(2003,"Error: Failed to allocate memory for 2LPT."
 	      "Tried to allocate %d Mbytes\n",(int)(bytes/(1024*1024)));
   
-  msg_printf(info,"%d Mbytes allocated for LPT\n",(int)(bytes/(1024*1024)));
+  msg_printf("%d Mbytes allocated for LPT\n",(int)(bytes/(1024*1024)));
 
   //
   // FFTW3 plans
@@ -131,8 +131,8 @@ void lpt_init(const int nc)
 
 void lpt_set_displacement(const int Seed,const double Box)
 {
-  msg_printf(verbose,"Computing LPT displacement fields...\n");
-  msg_printf(info,"Random Seed = %d\n",Seed);
+  msg_printf("Computing LPT displacement fields...\n");
+  msg_printf("Random Seed = %d\n",Seed);
 
   //
   // Setting constant parameters
@@ -348,12 +348,12 @@ void lpt_set_displacement(const int Seed,const double Box)
     }
   }
 
-  msg_printf(verbose, "Fourier transforming displacement gradient...");
+  msg_printf("Fourier transforming displacement gradient...");
 
   for(int i=0;i<6;i++)
     fftwf_mpi_execute_dft_c2r(Inverse_plan[i],cdigrad[i],digrad[i]);
 
-  msg_printf(verbose,"Done.\n");
+  msg_printf("Done.\n");
 
   // Compute second order source and store it in digrad[3]
   for(int i=0;i<Local_nx;i++) {
@@ -371,7 +371,7 @@ void lpt_set_displacement(const int Seed,const double Box)
     }
   }
 
-  msg_printf(verbose, "Fourier transforming second order source...\n");
+  msg_printf("Fourier transforming second order source...\n");
   fftwf_mpi_execute_dft_r2c(Forward_plan, digrad[3], cdigrad[3]);
 
   // The memory allocated for cdigrad[0], [1], and [2] will be used for 
@@ -418,7 +418,7 @@ void lpt_set_displacement(const int Seed,const double Box)
       
   // Now, both cdisp, and cdisp2 have the ZA and 2nd order displacements
   for(int axes=0;axes<3;axes++) {  
-    msg_printf(verbose,"Fourier transforming displacements, axis %d.\n",axes);
+    msg_printf("Fourier transforming displacements, axis %d.\n",axes);
 
     fftwf_mpi_execute_dft_c2r(Disp_plan[axes],cdisp[axes],disp[axes]);
     fftwf_mpi_execute_dft_c2r(Disp2_plan[axes],cdisp2[axes],disp2[axes]);
@@ -458,8 +458,14 @@ void write_snapshot(const char filebase[],const double a_init)
   const float Dv2=Vgrowth2(a_init); // dD_{2lpt}/dTau
   double nmesh3_inv=1.0/pow((double)Nmesh,3.0);
 
-  msg_printf(normal,"Longid is used for GADGET snapshot. %d-byte.\n", 
+  msg_printf("Writing output to %s.x with Gadget-1 format\n",filebase);
+#ifdef _LONGIDS
+  msg_printf("Longid is used for GADGET snapshot. %d-byte.\n", 
 	     sizeof(unsigned long long));
+#else //_LONGIDS
+  msg_printf("Shortid is used for GADGET snapshot. %d-byte.\n", 
+	     sizeof(unsigned int));
+#endif //_LONGIDS
 
   long long np_send=np,np_total;
   MPI_Reduce(&np_send,&np_total,1,MPI_LONG_LONG, MPI_SUM,0,MPI_COMM_WORLD);
@@ -497,11 +503,14 @@ void write_snapshot(const char filebase[],const double a_init)
   fwrite(&blklen,sizeof(blklen),1,fp);
   float x0[3];
   for(int i=0;i<Local_nx;i++) {
-    x0[0]=(Local_x_start+i+0.5f)*dx;
+    x0[0]=(Local_x_start+i)*dx;
+    //    x0[0]=(Local_x_start+i+0.5f)*dx;
     for(int j=0;j<Nmesh;j++) {
-      x0[1]=(j+0.5f)*dx;
+      x0[1]=j*dx;
+      //      x0[1]=(j+0.5f)*dx;
       for(int k=0;k<Nmesh;k++) {
-	x0[2]=(k+0.5f)*dx;
+	x0[2]=k*dx;
+	//	x0[2]=(k+0.5f)*dx;
 
 	for(int axes=0;axes<3;axes++) {
 	  float dis=disp[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
@@ -535,6 +544,7 @@ void write_snapshot(const char filebase[],const double a_init)
   fwrite(&blklen,sizeof(blklen),1,fp);
 
   // id
+#ifdef _LONGIDS
   blklen=np*sizeof(unsigned long long);
   fwrite(&blklen,sizeof(blklen),1,fp);
   long long id0=(long long)Local_x_start*Nmesh*Nmesh+1;
@@ -543,10 +553,20 @@ void write_snapshot(const char filebase[],const double a_init)
     fwrite(&id_out,sizeof(unsigned long long),1,fp); 
   }
   fwrite(&blklen,sizeof(blklen),1,fp);
+#else //_LONGIDS
+  blklen=np*sizeof(unsigned int);
+  fwrite(&blklen,sizeof(blklen),1,fp);
+  int id0=Local_x_start*Nmesh*Nmesh+1;
+  for(int i=0;i<np;i++) {
+    unsigned int id_out=id0+i;
+    fwrite(&id_out,sizeof(unsigned int),1,fp); 
+  }
+  fwrite(&blklen,sizeof(blklen),1,fp);
+#endif //_LONGIDS
 
   fclose(fp);
 
-  msg_printf(normal, "snapshot %s written\n", filebase);
+  msg_printf("snapshot %s written\n", filebase);
 }
 
 static FILE *new_gadget_file(char *fname,GadgetHeader header)
@@ -588,8 +608,6 @@ void write_snapshot_cola(const char filebase[],const double a_init)
   box_touched_total=(int *)calloc(nboxes,sizeof(int));
   file_array=(FILE **)malloc(nboxes*sizeof(FILE *));
 
-  printf(" THERE ARE %d BOXES\n",nboxes);
-
   const long long npt=((long long)(Nmesh*Nmesh))*Nmesh;
   const int np=Local_nx*Nmesh*Nmesh;
   const double boxsize=Param.boxsize;
@@ -604,8 +622,15 @@ void write_snapshot_cola(const char filebase[],const double a_init)
   const float Dv2=Vgrowth2(a_init); // dD_{2lpt}/dTau
   double nmesh3_inv=1.0/pow((double)Nmesh,3.0);
 
-  msg_printf(normal,"Longid is used for GADGET snapshot. %d-byte.\n", 
+  msg_printf("Writing output to %s.x with COLA-boxes format\n",filebase);
+  msg_printf(" There are %d boxes\n",nboxes);
+#ifdef _LONGIDS
+  msg_printf("Longid is used for GADGET snapshot. %d-byte.\n", 
 	     sizeof(unsigned long long));
+#else //_LONGIDS
+  msg_printf("Shortid is used for GADGET snapshot. %d-byte.\n", 
+	     sizeof(unsigned int));
+#endif //_LONGIDS
 
   long long np_send=np,np_total;
   MPI_Reduce(&np_send,&np_total,1,MPI_LONG_LONG, MPI_SUM,0,MPI_COMM_WORLD);
@@ -630,16 +655,23 @@ void write_snapshot_cola(const char filebase[],const double a_init)
   header.flag_gadgetformat=0;
 
   float x0[3];
+#ifdef _LONGIDS
   long long id=(long long)Local_x_start*Nmesh*Nmesh+1;
+#else //_LONGIDS
+  int id=Local_x_start*Nmesh*Nmesh+1;
+#endif //_LONGIDS
   int thisnode=comm_this_node();
   double inv_l_subbox=nbside/boxsize;
   double l_subbox=boxsize/nbside;
   for(int i=0;i<Local_nx;i++) {
-    x0[0]=(Local_x_start+i+0.5f)*dx;
+    x0[0]=(Local_x_start+i)*dx;
+    //    x0[0]=(Local_x_start+i+0.5f)*dx;
     for(int j=0;j<Nmesh;j++) {
-      x0[1]=(j+0.5f)*dx;
+      x0[1]=j*dx;
+      //      x0[1]=(j+0.5f)*dx;
       for(int k=0;k<Nmesh;k++) {
-	x0[2]=(k+0.5f)*dx;
+	x0[2]=k*dx;
+	//	x0[2]=(k+0.5f)*dx;
 
 	int index_box;
 	for(int axes=0;axes<3;axes++) {
@@ -706,11 +738,11 @@ void write_snapshot_cola(const char filebase[],const double a_init)
       ibox[0]=i%nbside;
       ibox[1]=((i-ibox[0])/nbside)%nbside;
       ibox[2]=(i-ibox[0]-ibox[1]*nbside)/(nbside*nbside);
-      msg_printf(normal,"%llu particles in box (%d,%d,%d), from %d nodes\n",
+      msg_printf("%llu particles in box (%d,%d,%d), from %d nodes\n",
 		 np_in_box_total[i],ibox[0],ibox[1],ibox[2],box_touched_total[i]);
       ntot+=np_in_box_total[i];
     }
-    msg_printf(normal,"Total: %llu particles\n",ntot);
+    msg_printf("Total: %llu particles\n",ntot);
   }
 
   //Fix headers and particle numbers
@@ -762,5 +794,5 @@ void write_snapshot_cola(const char filebase[],const double a_init)
   free(np_in_box);
   free(np_in_box_total);
   free(file_array);
-  msg_printf(normal, "snapshot %s written\n", filebase);
+  msg_printf("snapshot %s written\n", filebase);
 }
