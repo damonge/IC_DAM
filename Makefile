@@ -5,7 +5,7 @@
 CC      = mpicc -std=c99 
 WOPT    ?= -Wall
 CFLAGS  := -O3 $(WOPT)
-CFLAGS += #-D_LONGIDS #-D_DAM_SAVEMEM
+CFLAGS += -D_LONGIDS -D_DEBUG #-D_DAM_SAVEMEM
 LIBS    := -lm
 
 # Define paths of FFTW3 & GSL libraries if necessary.
@@ -21,8 +21,7 @@ EXEC = IC_DAM
 all: $(EXEC)
 
 OBJS := src/main.o
-OBJS += src/read_param.o src/lpt.o src/msg.o src/cosmo.o
-OBJS += src/comm.o src/timer.o
+OBJS += src/read_param.o src/lpt.o src/msg.o src/cosmo.o src/timer.o
 
 LIBS += -ldl
 LIBS += -lgsl -lgslcblas

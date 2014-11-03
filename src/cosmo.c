@@ -26,6 +26,18 @@ static struct pow_table
   double logk, logD;
 } *PowerTable;
 
+#define ALPHA_WINDOW 6.0
+static double window_cutoff(double k,double k_cutoff,int cut_ls)
+{
+  double x=k/k_cutoff;
+  double w=exp(-0.5*pow(x,ALPHA_WINDOW));
+
+  if(cut_ls)
+    return 1-w;
+  else
+    return w;
+}
+
 static void read_power_table_camb(const char filename[])
 {
   double k, p;
@@ -151,6 +163,19 @@ static void normalize_power(const double sigma8)
 	      sigma8_input,sigma8);
 
   msg_printf("Input power spectrum sigma8 %f\n",sigma8_input);
+
+  if(Param.scale_cutoff>0) {
+    int i;
+    double k_cutoff=2*M_PI/Param.scale_cutoff;
+    
+    msg_printf("Implementing cutoff window function on scale k=%.4lE h/Mpc \n",k_cutoff);
+    for(i=0;i<NPowerTable;i++) {
+      double k=pow(10.,PowerTable[i].logk);
+      double Dk=pow(10.,PowerTable[i].logD);
+      double wk=window_cutoff(k,k_cutoff,Param.cut_ls);
+      PowerTable[i].logD=log10(Dk*wk*wk);
+    }
+  }
 }
 
 static double omega_a(const double a)
@@ -226,28 +251,24 @@ double Vgrowth2(const double a) //Returns dD2/dTau
   return q*d2*f2/a;
 }
 
-void cosmo_init(const char filename[],const double sigma8,
-		const double omega_m,const double omega_lambda,
-		const double a_initial)
+void cosmo_init(void)
 {
-  Omega=omega_m;
-  OmegaLambda=omega_lambda;
+  //Set cosmological parameters
+  Omega=Param.omega_m;
+  OmegaLambda=1-Param.omega_m;
+  msg_printf("Growth at a=%lE is %lE\n",Param.a_init,GrowthFactor(Param.a_init));
 
-  int myrank=comm_this_node();
-
-  if(myrank==0) {
-    read_power_table_camb(filename);
-    normalize_power(sigma8);
+  //Read power spectrum
+  if(Param.i_node==0) {
+    read_power_table_camb(Param.power_spectrum_filename);
+    normalize_power(Param.sigma8);
+    msg_printf("Powerspectrum file: %s\n",Param.power_spectrum_filename);
   }
-
-  msg_printf("Powerspectrum file: %s\n",filename);
-  msg_printf("Growth at a=%lE is %lE\n",a_initial,GrowthFactor(a_initial));
-
+  
   MPI_Bcast(&NPowerTable,1,MPI_INT,0,MPI_COMM_WORLD);
-  if(myrank!=0) {
+  if(Param.i_node!=0) {
     PowerTable=malloc(NPowerTable*sizeof(struct pow_table));
   }
-
   MPI_Bcast(PowerTable,NPowerTable*sizeof(struct pow_table),MPI_BYTE,0,
 	    MPI_COMM_WORLD);
 }

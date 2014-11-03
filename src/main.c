@@ -21,30 +21,28 @@ int main(int argc,char* argv[])
   read_parameters(argv[1]);
 
   fftwf_mpi_init();
-  comm_init(Param.nc,Param.boxsize);
-
-  cosmo_init(Param.power_spectrum_filename,Param.sigma8,
-	     Param.omega_m,1-Param.omega_m,Param.a_final);
-
-  lpt_init(Param.nc);
-
+  cosmo_init();
+  lpt_init();
   MPI_Barrier(MPI_COMM_WORLD);
-  int seed=Param.random_seed;
 
   //
   // LPT
   //
   timer_set_category(LPT);
-  lpt_set_displacement(seed,Param.boxsize);
+  lpt_set_displacement();
 
   //
   // Writeout
   //
   timer_set_category(Snp);
-  if(Param.nbox_per_side<=0)
-    write_snapshot(Param.init_filename,Param.a_final);
-  else
-    write_snapshot_cola(Param.init_filename,Param.a_final);
+  if(Param.write_as_field)
+    write_field();
+  else {
+    if(Param.nbox_per_side<=0)
+      write_snapshot();
+    else
+      write_snapshot_cola();
+  }
 
   timer_print();
   lpt_end();

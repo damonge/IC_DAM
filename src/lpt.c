@@ -52,8 +52,10 @@ void lpt_end(void)
 }
 
 // Setup variables for 2LPT initial condition
-void lpt_init(const int nc)
+void lpt_init(void)
 {
+  const int nc=Param.n_grid;
+
   // nc: number of mesh per dimension
   ptrdiff_t local_nx,local_x_start;
   ptrdiff_t total_size=fftwf_mpi_local_size_3d(nc,nc,nc,MPI_COMM_WORLD,
@@ -62,9 +64,6 @@ void lpt_init(const int nc)
   total_size/=nc;
   total_size*=(nc/2+1);
 #endif //_DAM_SAVEMEM
-  
-  Local_nx=local_nx;
-  Local_x_start=local_x_start;
 
   //
   // Allocate memory
@@ -120,31 +119,30 @@ void lpt_init(const int nc)
 				MPI_COMM_WORLD,FFTW_ESTIMATE);
   }
 
-  // FFTW_MPI_TRANSPOSED_IN/FFTW_MPI_TRANSPOSED_OUT would be faster
-  // FFTW_MEASURE is probably better for multiple realization  
-
-  // misc data
+  Local_nx=Param.local_nx;
+  Local_x_start=Param.local_x_start;
   Nmesh=nc;
   Nsample=nc;
   seedtable=malloc(Nmesh*Nmesh*sizeof(unsigned int)); assert(seedtable);
 }
 
-void lpt_set_displacement(const int Seed,const double Box)
+void lpt_set_displacement()
 {
   msg_printf("Computing LPT displacement fields...\n");
-  msg_printf("Random Seed = %d\n",Seed);
+  msg_printf("Random Seed = %d\n",Param.random_seed);
 
   //
   // Setting constant parameters
   //
-  const double fac=pow(2*M_PI/Box,1.5);
+  const double boxsize=Param.boxsize;
+  const double fac=pow(2*M_PI/boxsize,1.5);
 
   //
   // Setup random seeds 
   //  complicated way for backward compatibility?
   //
   gsl_rng* random_generator=gsl_rng_alloc(gsl_rng_ranlxd1);
-  gsl_rng_set(random_generator,Seed);
+  gsl_rng_set(random_generator,Param.random_seed);
 
   assert(seedtable);
 
@@ -190,7 +188,7 @@ void lpt_set_displacement(const int Seed,const double Box)
 	}
 
   double kvec[3];
-  double dk=2*M_PI/Box;
+  double dk=2*M_PI/boxsize;
 
   for(int i=0;i<Nmesh;i++) {
     int ii=Nmesh-i;
@@ -228,11 +226,11 @@ void lpt_set_displacement(const int Seed,const double Box)
 	  double kmag=sqrt(kmag2);
 	  double i_kmag2=1.0/kmag2;
 	  
-	  if(fabs(kvec[0])*Box/(2*M_PI)>Nsample/2) //DAM: WHY??!!
+	  if(fabs(kvec[0])*boxsize/(2*M_PI)>Nsample/2) //DAM: WHY??!!
 	    continue;
-	  if(fabs(kvec[1])*Box/(2*M_PI)>Nsample/2)
+	  if(fabs(kvec[1])*boxsize/(2*M_PI)>Nsample/2)
 	    continue;
-	  if(fabs(kvec[2])*Box/(2*M_PI)>Nsample/2)
+	  if(fabs(kvec[2])*boxsize/(2*M_PI)>Nsample/2)
 	    continue;
 		      
 	  double p_of_k=PowerSpec(kmag);
@@ -435,11 +433,71 @@ static void my_fread(void *ptr,size_t size,size_t count,FILE *stream)
     msg_abort(123,"Error freading\n");
 }
 
-void write_snapshot(const char filebase[],const double a_init)
+void write_field(void)
+{
+  char filename[256];
+  sprintf(filename,"%s.%d",Param.init_filename,Param.i_node);
+
+  FILE* fp=fopen(filename,"w");
+  if(fp==0)
+    msg_abort(9000,"Error: Unable to write to file: %s\n",filename);
+
+  const long long npt=((long long)(Nmesh*Nmesh))*Nmesh;
+  const int np=Local_nx*Nmesh*Nmesh;
+  const double boxsize=Param.boxsize;
+  double nmesh3_inv=1.0/pow((double)Nmesh,3.0);
+
+  msg_printf("Writing output to %s.x as field\n",Param.init_filename);
+
+  long long np_send=np,np_total;
+  MPI_Reduce(&np_send,&np_total,1,MPI_LONG_LONG, MPI_SUM,0,MPI_COMM_WORLD);
+  MPI_Bcast(&np_total,1,MPI_LONG_LONG,0,MPI_COMM_WORLD);
+
+  if(np_total!=npt)
+    msg_abort(123,"%ld %ld\n",np_total,npt);
+
+  //Write header
+  int blklen=sizeof(double)+sizeof(int);
+  fwrite(&blklen,sizeof(blklen),1,fp);
+  fwrite(&boxsize,sizeof(double),1,fp);
+  fwrite(&Nmesh,sizeof(int),1,fp);
+  fwrite(&blklen,sizeof(blklen),1,fp);
+
+  //Writing gridpoints
+  float ix[3];
+  GridPoint gp;
+  blklen=np*sizeof(GridPoint);
+  fwrite(&blklen,sizeof(blklen),1,fp);
+  for(int i=0;i<Local_nx;i++) {
+    ix[0]=i;
+    for(int j=0;j<Nmesh;j++) {
+      ix[1]=j;
+      for(int k=0;k<Nmesh;k++) {
+	ix[2]=k;
+
+	for(int axes=0;axes<3;axes++) {
+	  float dis=disp[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
+	  float dis2=nmesh3_inv*disp2[axes][(i*Nmesh+j)*(2*(Nmesh/2+1))+k];
+	  gp.ix[axes]=ix[axes];
+	  gp.dx1[axes]=dis;
+	  gp.dx2[axes]=dis2;
+	}
+	fwrite(&(gp),sizeof(GridPoint),1,fp);
+      }
+    }
+  }
+  fwrite(&blklen,sizeof(blklen),1,fp);
+
+  fclose(fp);
+
+  msg_printf("snapshot %s written\n",Param.init_filename);
+}
+
+void write_snapshot(void)
 {
   float x[3],v[3];
   char filename[256];
-  sprintf(filename,"%s.%d",filebase,comm_this_node());
+  sprintf(filename,"%s.%d",Param.init_filename,Param.i_node);
 
   FILE* fp=fopen(filename,"w");
   if(fp==0)
@@ -451,14 +509,14 @@ void write_snapshot(const char filebase[],const double a_init)
   const double omega_m=Param.omega_m;
   const double h=Param.h;
   const float dx=Param.boxsize/Nmesh;
-  const float vfac=100.0f/a_init;   // km/s; H0= 100 km/s/(h^-1 Mpc)
-  const float D1=GrowthFactor(a_init);
-  const float D2=GrowthFactor2(a_init);
-  const float Dv=Vgrowth(a_init); // dD_{za}/dTau
-  const float Dv2=Vgrowth2(a_init); // dD_{2lpt}/dTau
+  const float vfac=100.0f/Param.a_init;   // km/s; H0= 100 km/s/(h^-1 Mpc)
+  const float D1=GrowthFactor(Param.a_init);
+  const float D2=GrowthFactor2(Param.a_init);
+  const float Dv=Vgrowth(Param.a_init); // dD_{za}/dTau
+  const float Dv2=Vgrowth2(Param.a_init); // dD_{2lpt}/dTau
   double nmesh3_inv=1.0/pow((double)Nmesh,3.0);
 
-  msg_printf("Writing output to %s.x with Gadget-1 format\n",filebase);
+  msg_printf("Writing output to %s.x with Gadget-1 format\n",Param.init_filename);
 #ifdef _LONGIDS
   msg_printf("Longid is used for GADGET snapshot. %d-byte.\n", 
 	     sizeof(unsigned long long));
@@ -482,11 +540,11 @@ void write_snapshot(const char filebase[],const double a_init)
   
   header.np[1]=np;
   header.mass[1]=m;
-  header.time=a_init;
+  header.time=Param.a_init;
   header.redshift=1.0/header.time-1;
   header.np_total[1]=(unsigned int)np_total;
   header.np_total_highword[1]=(unsigned int)(np_total >> 32);
-  header.num_files=comm_nnode();
+  header.num_files=Param.n_nodes;
   header.boxsize=boxsize;
   header.omega0=omega_m;
   header.omega_lambda=1.0-omega_m;
@@ -526,7 +584,7 @@ void write_snapshot(const char filebase[],const double a_init)
   fwrite(&blklen,sizeof(blklen),1,fp);
 
   // velocity
-  const float vfac2=1.0/sqrt(a_init);
+  const float vfac2=1.0/sqrt(Param.a_init);
   fwrite(&blklen,sizeof(blklen),1,fp);
   for(int i=0;i<Local_nx;i++) {
     for(int j=0;j<Nmesh;j++) {
@@ -566,7 +624,7 @@ void write_snapshot(const char filebase[],const double a_init)
 
   fclose(fp);
 
-  msg_printf("snapshot %s written\n", filebase);
+  msg_printf("snapshot %s written\n",Param.init_filename);
 }
 
 static FILE *new_gadget_file(char *fname,GadgetHeader header)
@@ -591,7 +649,7 @@ static void end_gadget_file(FILE *f)
   fclose(f);
 }
 
-void write_snapshot_cola(const char filebase[],const double a_init)
+void write_snapshot_cola(void)
 {
   Particle part;
   char fname[256];
@@ -614,15 +672,15 @@ void write_snapshot_cola(const char filebase[],const double a_init)
   const double omega_m=Param.omega_m;
   const double h=Param.h;
   const float dx=Param.boxsize/Nmesh;
-  const float vfac=100.0f/a_init;   // km/s; H0= 100 km/s/(h^-1 Mpc)
-  const float vfac2=1.0/sqrt(a_init);
-  const float D1=GrowthFactor(a_init);
-  const float D2=GrowthFactor2(a_init);
-  const float Dv=Vgrowth(a_init); // dD_{za}/dTau
-  const float Dv2=Vgrowth2(a_init); // dD_{2lpt}/dTau
+  const float vfac=100.0f/Param.a_init;   // km/s; H0= 100 km/s/(h^-1 Mpc)
+  const float vfac2=1.0/sqrt(Param.a_init);
+  const float D1=GrowthFactor(Param.a_init);
+  const float D2=GrowthFactor2(Param.a_init);
+  const float Dv=Vgrowth(Param.a_init); // dD_{za}/dTau
+  const float Dv2=Vgrowth2(Param.a_init); // dD_{2lpt}/dTau
   double nmesh3_inv=1.0/pow((double)Nmesh,3.0);
 
-  msg_printf("Writing output to %s.x with COLA-boxes format\n",filebase);
+  msg_printf("Writing output to %s.x with COLA-boxes format\n",Param.init_filename);
   msg_printf(" There are %d boxes\n",nboxes);
 #ifdef _LONGIDS
   msg_printf("Longid is used for GADGET snapshot. %d-byte.\n", 
@@ -646,7 +704,7 @@ void write_snapshot_cola(const char filebase[],const double a_init)
   const double m=omega_m*rho_crit*pow(boxsize,3.0)/np_total;
   
   header.mass[1]=m;
-  header.time=a_init;
+  header.time=Param.a_init;
   header.redshift=1.0/header.time-1;
   header.boxsize=boxsize/nbside;
   header.omega0=omega_m;
@@ -660,7 +718,7 @@ void write_snapshot_cola(const char filebase[],const double a_init)
 #else //_LONGIDS
   int id=Local_x_start*Nmesh*Nmesh+1;
 #endif //_LONGIDS
-  int thisnode=comm_this_node();
+  int thisnode=Param.i_node;
   double inv_l_subbox=nbside/boxsize;
   double l_subbox=boxsize/nbside;
   for(int i=0;i<Local_nx;i++) {
@@ -703,14 +761,8 @@ void write_snapshot_cola(const char filebase[],const double a_init)
 
 	//Open file if not created yet
 	if(box_touched[index_box]==0) {
-	  sprintf(fname,"%s_box%dp%dp%d.%d",filebase,
+	  sprintf(fname,"%s_box%dp%dp%d.%d",Param.init_filename,
 		  ibox[0],ibox[1],ibox[2],thisnode);
-	  /*
-	  printf("Creating file %s\n",fname);
-	  printf("  %d %d %d\n",ibox[0],ibox[1],ibox[2]);
-	  printf("  %lE %lE %lE %lE\n",part.x[0],part.x[1],part.x[2],boxsize);
-	  printf("  %d %d %d\n",(int)(inv_l_subbox*part.x[0]),(int)(inv_l_subbox*part.x[1]),(int)(inv_l_subbox*part.x[2]));
-	  */
 	  file_array[index_box]=new_gadget_file(fname,header);
 	  box_touched[index_box]=1;
 	}
@@ -754,7 +806,7 @@ void write_snapshot_cola(const char filebase[],const double a_init)
       ibox[2]=(i-ibox[0]-ibox[1]*nbside)/(nbside*nbside);
 
       //Open file
-      sprintf(fname,"%s_box%dp%dp%d.%d",filebase,
+      sprintf(fname,"%s_box%dp%dp%d.%d",Param.init_filename,
 	      ibox[0],ibox[1],ibox[2],thisnode);
       file_array[i]=fopen(fname,"r+");
 
@@ -794,5 +846,5 @@ void write_snapshot_cola(const char filebase[],const double a_init)
   free(np_in_box);
   free(np_in_box_total);
   free(file_array);
-  msg_printf("snapshot %s written\n", filebase);
+  msg_printf("snapshot %s written\n",Param.init_filename);
 }

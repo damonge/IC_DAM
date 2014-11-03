@@ -6,20 +6,27 @@
 //////
 // Defined in parameters.h
 typedef struct {
-  int nc;
-
-  double np_alloc_factor;
+  //Read from param file
+  int n_grid;
   double boxsize;
   int nbox_per_side;
-
-  double omega_m, sigma8, h;
-
+  double a_init;
   int random_seed;
-
-  double a_final;
-
+  double omega_m, sigma8, h;
+  double np_alloc_factor;
   char power_spectrum_filename[256];
   char init_filename[256];
+  double scale_cutoff;
+  int cut_ls;
+  int write_as_field;
+
+  //MPI stuff
+  int n_nodes;
+  int i_node;
+  int i_node_left;
+  int i_node_right;
+  ptrdiff_t local_nx;
+  ptrdiff_t local_x_start;
 } Parameters;
 Parameters Param;
 
@@ -28,8 +35,6 @@ int read_parameters(char *fname);
 
 //////
 // Defined in particle.h
-typedef float float3[3];
-
 typedef struct {
   float x[3];
   float v[3];
@@ -42,19 +47,17 @@ typedef struct {
 #endif //_LONGIDS
 } Particle;
 
-//////
-// Defined in comm.h
-void comm_init(const int nc_part,const float boxsize);
-int comm_this_node(void);
-int comm_nnode(void);
+typedef struct {
+  int ix[3];
+  float dx1[3];
+  float dx2[3];
+} GridPoint;
 
 
 //////
 // Defined in cosmo.h
 double PowerSpec(const double k);
-void cosmo_init(const char filename[],const double sigma8,
-		const double omega_m,const double omega_lambda,
-		const double a_initial);
+void cosmo_init(void);
 double GrowthFactor(const double a);
 double GrowthFactor2(const double a);
 double Vgrowth(const double a);
@@ -63,9 +66,9 @@ double Vgrowth2(const double a);
 
 //////
 // Defined in lpt.h
-void lpt_init(const int nc);
+void lpt_init(void);
 void lpt_end(void);
-void lpt_set_displacement(const int Seed,const double Box);
+void lpt_set_displacement(void);
 
 
 //////
@@ -110,7 +113,8 @@ typedef struct {
   char fill[56];
 } GadgetHeader;
 
-void write_snapshot(const char filebase[],const double a_init);
-void write_snapshot_cola(const char filebase[],const double a_init);
+void write_snapshot(void);
+void write_snapshot_cola(void);
+void write_field(void);
 
 #endif //_COMMON_H_
